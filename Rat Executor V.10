@@ -1,0 +1,327 @@
+# Launch OpiumWare first
+open -a /Applications/Opiumware.app
+
+# Create the folder
+mkdir -p ~/Downloads/rat-executor && cd ~/Downloads/rat-executor
+
+# Copy the monster image if it exists
+[ -f ~/Downloads/pj40k.jpg ] && cp ~/Downloads/pj40k.jpg ~/Downloads/rat-executor/bg.jpg
+
+# Create package.json
+cat > package.json << 'EOF'
+{
+  "name": "rat-executor",
+  "version": "1.0.0",
+  "main": "main.js",
+  "scripts": { "start": "electron ." },
+  "dependencies": { "express": "^4.18.2" },
+  "devDependencies": { "electron": "^28.0.0" }
+}
+EOF
+
+# Create main.js
+cat > main.js << 'EOF'
+const { app, BrowserWindow } = require('electron');
+const path = require('path');
+const { fork, exec } = require('child_process');
+let mainWindow, backendProcess;
+function startBackend() {
+  backendProcess = fork(path.join(__dirname, 'server.js'), [], { silent: true });
+}
+function createWindow() {
+  mainWindow = new BrowserWindow({
+    width: 1100, height: 720,
+    minWidth: 800, minHeight: 550,
+    title: 'RAT Executor',
+    backgroundColor: '#030b03',
+    titleBarStyle: 'hiddenInset',
+    webPreferences: { nodeIntegration: false, contextIsolation: true }
+  });
+  mainWindow.setMenuBarVisibility(false);
+  mainWindow.loadFile('index.html');
+  mainWindow.on('closed', () => { mainWindow = null; });
+}
+app.whenReady().then(() => {
+  startBackend();
+  setTimeout(createWindow, 800);
+  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+});
+app.on('window-all-closed', () => {
+  if (backendProcess) backendProcess.kill();
+  exec('osascript -e \'quit app "Opiumware"\'');
+  app.quit();
+});
+EOF
+
+# Create server.js
+cat > server.js << 'EOF'
+const express = require('express');
+const net = require('net');
+const zlib = require('zlib');
+const app = express();
+const PORTS = [8392,8393,8394,8395,8396,8397];
+app.use(express.json());
+app.use((req,res,next)=>{
+  res.setHeader('Access-Control-Allow-Origin','*');
+  res.setHeader('Access-Control-Allow-Headers','Content-Type');
+  res.setHeader('Access-Control-Allow-Methods','POST,GET,OPTIONS');
+  if(req.method==='OPTIONS') return res.sendStatus(200);
+  next();
+});
+function trySend(script,port){
+  return new Promise((resolve)=>{
+    zlib.deflate(script,(err,compressed)=>{
+      if(err) return resolve({success:false,message:`Compression failed: ${err.message}`});
+      const socket=new net.Socket();
+      socket.setTimeout(2000);
+      socket.connect(port,'127.0.0.1',()=>{
+        socket.write(compressed);
+        socket.end();
+        resolve({success:true,message:`Sent ${compressed.length} bytes to port ${port}`});
+      });
+      socket.on('error',(e)=>{socket.destroy();resolve({success:false,message:e.message});});
+      socket.on('timeout',()=>{socket.destroy();resolve({success:false,message:`Timeout on port ${port}`});});
+    });
+  });
+}
+app.post('/execute',async(req,res)=>{
+  const{script,port}=req.body;
+  if(!script) return res.json({success:false,message:'No script provided'});
+  if(port==='ALL'){
+    for(const p of PORTS){
+      const r=await trySend(script,p);
+      if(r.success) return res.json({success:true,port:p,message:r.message});
+    }
+    return res.json({success:false,message:'All ports failed'});
+  }
+  const p=parseInt(port,10);
+  const r=await trySend(script,p);
+  return res.json({...r,port:p});
+});
+app.get('/ping',(req,res)=>res.json({status:'ok'}));
+app.listen(3000,()=>console.log('Backend running on port 3000'));
+EOF
+
+# Create index.html
+cat > index.html << 'EOF'
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<title>RAT Executor</title>
+<link rel="stylesheet" href="style.css"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs/loader.min.js"></script>
+</head>
+<body>
+<div class="titlebar">
+  <div class="titlebar-left">
+    <span class="title-logo">RAT</span>
+    <span style="color:#1a6a1a">|</span>
+    <span class="title-sub">EXECUTOR</span>
+    <span class="title-badge">LEVEL 10</span>
+    <span class="title-danger">TROJAN/SPYWARE/MALWARE</span>
+  </div>
+  <div class="titlebar-right">
+    <span class="title-stat" id="connection-status">● NOT ATTACHED</span>
+  </div>
+</div>
+<div class="main-layout">
+  <div class="sidebar">
+    <div class="sidebar-section">Modules</div>
+    <div class="sidebar-item active">keylogger</div>
+    <div class="sidebar-item">screen cap</div>
+    <div class="sidebar-item">remote shell</div>
+    <div class="sidebar-item">file stealer</div>
+    <div class="sidebar-item">cam spy</div>
+    <div class="sidebar-section" style="margin-top:16px">Payloads</div>
+    <div class="sidebar-item dim">payload_01</div>
+    <div class="sidebar-item dim">payload_02</div>
+    <div class="sidebar-item dim">dropper_v3</div>
+  </div>
+  <div class="center-panel">
+    <div class="tab-bar">
+      <div class="tab active">Script 1</div>
+      <div class="tab">Payload</div>
+      <div class="tab">Remote</div>
+      <div class="tab tab-add">+</div>
+    </div>
+    <div id="editor-container"></div>
+    <div class="toolbar">
+      <label class="port-label">PORT</label>
+      <select id="port-select">
+        <option value="ALL">ALL (auto)</option>
+        <option value="8392" selected>8392</option>
+        <option value="8393">8393</option>
+        <option value="8394">8394</option>
+        <option value="8395">8395</option>
+        <option value="8396">8396</option>
+        <option value="8397">8397</option>
+      </select>
+      <button id="btn-execute" class="btn btn-exec">&#9654; Execute</button>
+      <button id="btn-inject" class="btn btn-inject">&#9889; Inject</button>
+      <button id="btn-clear" class="btn btn-dim">&#10005; Clear</button>
+      <div class="toolbar-spacer"></div>
+      <button id="btn-save" class="btn btn-dim">Save</button>
+      <button id="btn-open" class="btn btn-dim">Open</button>
+      <div id="attach-badge" class="not-attached">NOT ATTACHED</div>
+    </div>
+    <div class="console-header">
+      <span>CONSOLE OUTPUT</span>
+      <button id="btn-clear-console" class="btn-tiny">clear</button>
+    </div>
+    <div id="console-output" class="console-output"></div>
+  </div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
+EOF
+
+# Create style.css
+cat > style.css << 'EOF'
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{--green:#00ff41;--green-dim:#1a6a1a;--green-mid:#44aa44;--green-border:#1a3a1a;--bg-base:#040d04;--bg-dark:#030b03;--bg-bar:#060f06;--red:#ff3333;--red-dark:#1a0505;--red-border:#441111;--amber:#ffaa00;--font-mono:'Courier New',Courier,monospace}
+html,body{height:100%;background:var(--bg-base);color:var(--green);font-family:var(--font-mono);font-size:13px;overflow:hidden}
+.titlebar{display:flex;align-items:center;justify-content:space-between;background:#050e05;border-bottom:1px solid var(--green-border);padding:0 12px;height:36px;flex-shrink:0}
+.titlebar-left{display:flex;align-items:center;gap:10px}
+.title-logo{font-size:16px;font-weight:900;letter-spacing:4px;color:var(--green);text-transform:uppercase}
+.title-sub{font-size:13px;font-weight:700;letter-spacing:3px;color:var(--green-mid);text-transform:uppercase}
+.title-badge{background:#001a00;border:1px solid #007700;color:var(--green);font-size:10px;font-weight:700;letter-spacing:2px;padding:2px 8px;border-radius:2px}
+.title-danger{background:var(--red-dark);border:1px solid var(--red-border);color:var(--red);font-size:10px;font-weight:700;letter-spacing:1.5px;padding:2px 8px;border-radius:2px}
+.title-stat{font-size:11px;color:var(--red);letter-spacing:1px}
+.title-stat.attached{color:var(--green)}
+.main-layout{display:flex;height:calc(100vh - 36px);overflow:hidden}
+.sidebar{width:148px;background:var(--bg-base);border-right:1px solid var(--green-border);display:flex;flex-direction:column;padding:8px 0;flex-shrink:0;overflow-y:auto}
+.sidebar-section{font-size:9px;color:#1a5a1a;letter-spacing:2px;text-transform:uppercase;padding:8px 10px 4px;font-weight:700}
+.sidebar-item{display:flex;align-items:center;gap:7px;padding:5px 10px;font-size:11px;color:#2a7a2a;cursor:pointer;border-left:2px solid transparent}
+.sidebar-item::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--green);flex-shrink:0}
+.sidebar-item.dim::before{background:#1a4a1a}
+.sidebar-item.active{color:var(--green);background:rgba(0,255,65,0.05);border-left:2px solid var(--green)}
+.sidebar-item:hover:not(.active){color:var(--green-mid);background:rgba(0,255,65,0.03)}
+.center-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;background:var(--bg-dark)}
+.tab-bar{display:flex;background:var(--bg-bar);border-bottom:1px solid var(--green-border);padding:0 8px;gap:2px;flex-shrink:0}
+.tab{font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:#2a6a2a;padding:6px 14px;cursor:pointer;border-bottom:2px solid transparent}
+.tab.active{color:var(--green);border-bottom:2px solid var(--green)}
+.tab:hover:not(.active){color:var(--green-mid)}
+.tab.tab-add{color:#1a4a1a;font-size:15px;padding:4px 10px}
+#editor-container{flex:1;min-height:0;border-bottom:1px solid var(--green-border);position:relative}
+#editor-container::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:420px;height:420px;background-image:url('bg.jpg');background-size:contain;background-repeat:no-repeat;background-position:center;opacity:0.15;z-index:10;pointer-events:none}
+.toolbar{display:flex;align-items:center;gap:6px;background:var(--bg-bar);border-bottom:1px solid var(--green-border);padding:6px 10px;flex-shrink:0;flex-wrap:wrap}
+.port-label{font-size:10px;color:var(--green-dim);letter-spacing:2px}
+select{background:var(--bg-dark);color:var(--green);border:1px solid var(--green-border);border-radius:3px;padding:3px 8px;font-family:var(--font-mono);font-size:11px;cursor:pointer;outline:none}
+.btn{font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;border:none;border-radius:3px;padding:5px 13px;cursor:pointer;transition:opacity 0.15s}
+.btn:hover{opacity:0.8}.btn:active{transform:scale(0.97)}
+.btn-exec{background:#003300;color:var(--green);border:1px solid #007700}
+.btn-inject{background:#001a00;color:var(--green-mid);border:1px solid #004400}
+.btn-dim{background:#0a150a;color:#2a7a2a;border:1px solid var(--green-border)}
+.toolbar-spacer{flex:1}
+.not-attached{font-size:10px;background:var(--red-dark);border:1px solid var(--red-border);color:var(--red);padding:2px 8px;border-radius:2px;letter-spacing:1px}
+.not-attached.ok{background:#001a00;border:1px solid #007700;color:var(--green)}
+.console-header{display:flex;align-items:center;justify-content:space-between;background:#050e05;border-bottom:1px solid var(--green-border);padding:3px 10px;font-size:10px;color:var(--green-dim);letter-spacing:2px;text-transform:uppercase;flex-shrink:0}
+.btn-tiny{background:transparent;border:1px solid var(--green-border);color:#2a6a2a;font-size:10px;padding:1px 8px;border-radius:2px;cursor:pointer}
+.btn-tiny:hover{color:var(--green)}
+.console-output{height:130px;overflow-y:auto;background:var(--bg-dark);padding:8px 12px;font-size:12px;line-height:1.6;flex-shrink:0}
+.console-output::-webkit-scrollbar{width:4px}.console-output::-webkit-scrollbar-thumb{background:#0f3a0f;border-radius:2px}
+.log-info{color:var(--green)}.log-success{color:#44ff44}.log-error{color:var(--red)}.log-warn{color:var(--amber)}.log-muted{color:#2a7a2a}
+EOF
+
+# Create script.js
+cat > script.js << 'EOF'
+const BACKEND_URL='http://localhost:3000';
+require.config({paths:{vs:'https://cdnjs.cloudflare.com/ajax/libs/monaco-editor/0.44.0/min/vs'}});
+let editor;
+require(['vs/editor/editor.main'],function(){
+  editor=monaco.editor.create(document.getElementById('editor-container'),{
+    value:'-- RAT Executor v10.0\n-- Write your Lua script here\n\nprint("Hello from RAT Executor!")\n',
+    language:'lua',theme:'vs-dark',fontSize:13,
+    fontFamily:'"Courier New",Courier,monospace',
+    minimap:{enabled:false},scrollBeyondLastLine:false,
+    lineNumbers:'on',automaticLayout:true,padding:{top:10}
+  });
+  monaco.editor.defineTheme('rat-theme',{
+    base:'vs-dark',inherit:true,
+    rules:[
+      {token:'comment',foreground:'1a6a1a'},
+      {token:'string',foreground:'44cc44'},
+      {token:'keyword',foreground:'00ff41'},
+      {token:'number',foreground:'aaff88'},
+      {token:'',foreground:'00ee33'}
+    ],
+    colors:{
+      'editor.background':'#030b03','editor.foreground':'#00ff41',
+      'editor.lineHighlightBackground':'#0a1f0a',
+      'editorCursor.foreground':'#00ff41',
+      'editorLineNumber.foreground':'#1a4a1a',
+      'editor.selectionBackground':'#003300'
+    }
+  });
+  monaco.editor.setTheme('rat-theme');
+  log('Editor ready.','muted');
+});
+function log(message,type='info'){
+  const output=document.getElementById('console-output');
+  const line=document.createElement('div');
+  const now=new Date().toLocaleTimeString('en-US',{hour12:false});
+  line.className=`log-${type}`;
+  line.textContent=`[${now}] ${message}`;
+  output.appendChild(line);
+  output.scrollTop=output.scrollHeight;
+}
+function setAttachStatus(attached,label){
+  const badge=document.getElementById('attach-badge');
+  const status=document.getElementById('connection-status');
+  badge.textContent=label;
+  if(attached){badge.classList.add('ok');status.textContent='● '+label;status.classList.add('attached');}
+  else{badge.classList.remove('ok');status.textContent='● '+label;status.classList.remove('attached');}
+}
+document.getElementById('btn-execute').addEventListener('click',async()=>{
+  if(!editor){log('Editor not ready.','warn');return;}
+  const script=editor.getValue().trim();
+  if(!script){log('Editor is empty.','warn');return;}
+  const port=document.getElementById('port-select').value;
+  log(`Sending to port ${port}...`,'info');
+  setAttachStatus(false,'SENDING...');
+  try{
+    const res=await fetch(`${BACKEND_URL}/execute`,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({script,port})
+    });
+    const data=await res.json();
+    if(data.success){log(`SUCCESS — port ${data.port}: ${data.message}`,'success');setAttachStatus(true,`ATTACHED :${data.port}`);}
+    else{log(`FAILED — ${data.message}`,'error');setAttachStatus(false,'NOT ATTACHED');}
+  }catch(err){
+    log(`Cannot reach backend. ${err.message}`,'error');
+    setAttachStatus(false,'NOT ATTACHED');
+  }
+});
+document.getElementById('btn-inject').addEventListener('click',()=>document.getElementById('btn-execute').click());
+document.getElementById('btn-clear').addEventListener('click',()=>{if(editor){editor.setValue('');log('Cleared.','muted');}});
+document.getElementById('btn-clear-console').addEventListener('click',()=>document.getElementById('console-output').innerHTML='');
+document.getElementById('btn-save').addEventListener('click',()=>{
+  if(!editor)return;
+  const blob=new Blob([editor.getValue()],{type:'text/plain'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='script.lua';a.click();
+  log('Saved as script.lua','success');
+});
+document.getElementById('btn-open').addEventListener('click',()=>{
+  const input=document.createElement('input');input.type='file';input.accept='.lua,.txt';
+  input.onchange=(e)=>{
+    const file=e.target.files[0];if(!file||!editor)return;
+    const reader=new FileReader();
+    reader.onload=(ev)=>{editor.setValue(ev.target.result);log(`Loaded: ${file.name}`,'success');};
+    reader.readAsText(file);
+  };
+  input.click();
+});
+document.querySelectorAll('.tab').forEach(t=>t.addEventListener('click',()=>{document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));t.classList.add('active');}));
+document.querySelectorAll('.sidebar-item').forEach(i=>i.addEventListener('click',()=>{document.querySelectorAll('.sidebar-item').forEach(x=>x.classList.remove('active'));i.classList.add('active');}));
+EOF
+
+echo ""
+echo "Installing dependencies (this takes a few minutes)..."
+npm install
+
+echo ""
+echo "Launching RAT Executor..."
+npm start
